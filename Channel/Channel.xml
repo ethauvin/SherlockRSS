@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  SherlockRSS License
+
+  Copyright (c) 2004, Erik C. Thauvin (http://www.thauvin.net/erik/)
+  All rights reserved.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are
+  met:
+
+  Redistributions of source code must retain the above copyright notice,
+  this list of conditions and the following disclaimer.
+
+  Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+  Neither the name of the authors nor the names of its contributors may be
+  used to endorse or promote products derived from this software without
+  specific prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+  IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+  THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+  PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+  CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+  PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+  PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+  LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-->
+
+<channel>
+
+  <initialize language="JavaScript">
+	
+	debug("----- Initializing the data store -----");
+	
+	/* Set the channel's minimum size */
+ 	DataStore.Set("Internet.minViewSize", "{width=310; height=260}");
+
+	/* Update the data store representation of the search field as the
+		user types into it. This way, if they click the search button
+		before hitting return, the data store will reflect the latest
+		changes made by the user.
+	*/
+	DataStore.Set("Internet.MainQueryField.updateValueOnTextChanged", true);
+		
+	/* Customize the NSTableView a bit */
+	DataStore.Set("Internet.SearchResultsTable.pasteboardTypes.NSStringPboardType", "description.URL.objectValue");
+	DataStore.Set("Internet.SearchResultsTable.pasteboardTypes.NSURLPboardType", "doubleClickURL");
+	DataStore.Set("Internet.SearchResultsTable.visibleDragColumns", "description");
+	DataStore.Set("Internet.NoItemsFound.objectValue", "");
+
+	/* Initialize this with an empty document, so it fills in with white */
+	DataStore.Set("Internet.DetailHTMLView.htmlData", "");
+  </initialize>
+
+<triggers>
+
+
+<trigger path="Internet.didInstall" language="JavaScript">
+
+	debug("----- Channel did install -----");
+
+	/* Set a default value in the search field */
+	// DataStore.Set("Internet.MainQueryField.objectValue", "");
+</trigger> 
+
+
+<trigger path="Internet.SearchButton.action" language="JavaScript">
+
+	debug("----- User clicked the search button -----");
+
+	/* Clear out the previous results */
+	DataStore.Set("Internet.SearchResultsTable.dataValue", null);
+	
+	/* Indicate that a search is about to take place */
+	DataStore.Set("Internet.NetworkArrows.animating", true);
+
+
+	/* Kick off the search. Searches are usually done in XQuery, since
+		it has better data parsing/manipulating characteristics than
+		JavaScript.
+	*/
+	DataStore.Notify("DATA.action.performSearch");
+</trigger> 
+
+<trigger path="DATA.action.performSearch" language="XQuery"
+	inputs="query=Internet.MainQueryField.objectValue">
+
+	let $log := msg("----- Performing the search -----")
+	let $log := msg("----- Query: ", $query)
+	
+	let $httpRequest := http-request($query)
+	let $rss:= http-request-value($httpRequest, "DATA")
+	let $results := for $item in $rss/rss/channel/item 
+	return dictionary(
+                ("description", $item/title/text()/convert-html(.)), 
+                ("doubleClickURL", $item/link/text()/convert-html(.)) 
+	) 
+		
+	{-- From the trigger, return a dictionary with key/value pairs representing
+		data store locations and their values.
+	--}
+	return dictionary(
+		("Internet.SearchResultsTable.dataValue", $results),
+		("Internet.SearchResultsTable.selectedRows", null()),
+		("Internet.NetworkArrows.animating", false()),
+		("Internet.NoItemsFound.objectValue", if ($results) then "" else "No items found.")
+	)
+ </trigger>
+
+<trigger language="JavaScript" path="URL.complete">		
+	query = DataStore.Get("URL.query");
+	if (query)
+	{
+		DataStore.Set("Internet.MainQueryField.objectValue", query);
+		DataStore.Set("Internet.NetworkArrows.animating", true);
+		DataStore.Notify("DATA.action.performSearch");
+	}
+</trigger>
+
+<trigger path="Internet.SearchResultsTable" language="XQuery"
+   inputs="tableRows=Internet.SearchResultsTable.dataValue, selectedRows=Internet.SearchResultsTable.selectedRows" 
+   output="Internet.DetailHTMLView.url" task="true">
+	{-- If any aspect of the results table changes (.dataValue, or .selectedRows) --}
+	{-- we want to trigger an update of the detail view.                          --}
+
+	let $selectedItem := if (exists($selectedRows)) then
+		$tableRows[1+$selectedRows]
+	else
+		null()
+
+	return $selectedItem/doubleClickURL
+</trigger>
+
+</triggers>
+
+</channel>
+
